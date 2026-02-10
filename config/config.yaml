@@ -1,0 +1,94 @@
+# ==============================================================================
+# Emotional State Detection System — Configuration
+# ==============================================================================
+# Every tuneable parameter lives here.  Source code reads this file;
+# nothing is hardcoded in Python modules.
+# ==============================================================================
+
+project:
+  name: "Multimodal Emotional State Detection System"
+  version: "2.0.0"
+  description: >
+    Understands a person's current mental and emotional state from text,
+    voice, or facial expression — any single input is sufficient.
+    This is NOT a clinical diagnostic tool.
+
+# ---------------------------------------------------------------------------
+# Text Analyzer — uses a HuggingFace model fine-tuned for emotion classification
+# ---------------------------------------------------------------------------
+text:
+  # This model outputs: anger, disgust, fear, joy, neutral, sadness, surprise
+  model_name: "j-hartmann/emotion-english-distilroberta-base"
+  max_length: 512
+
+# ---------------------------------------------------------------------------
+# Voice Analyzer — acoustic feature extraction via librosa
+# ---------------------------------------------------------------------------
+voice:
+  sample_rate: 22050          # librosa default; more suitable for feature extraction
+  max_duration_sec: 60
+  # Reference thresholds for interpreting acoustic features.
+  # Based on published psychoacoustics research on emotional speech.
+  thresholds:
+    energy_low: 0.01          # RMS below this → low vocal energy
+    energy_high: 0.05         # RMS above this → high vocal energy
+    pitch_low_hz: 120         # mean F0 below this → flat / fatigued tone
+    pitch_high_hz: 220        # mean F0 above this → aroused / stressed tone
+    pitch_var_low: 20         # std(F0) below this → monotone (disengaged)
+    pitch_var_high: 50        # std(F0) above this → emotionally variable
+    tempo_slow_bpm: 90        # speech tempo below this → slow / lethargic
+    tempo_fast_bpm: 160       # speech tempo above this → rushed / anxious
+
+# ---------------------------------------------------------------------------
+# Face Analyzer — HuggingFace image-classification model for facial emotions
+# ---------------------------------------------------------------------------
+face:
+  # ViT model fine-tuned on FER-2013 (7 emotions: angry, disgust, fear,
+  # happy, neutral, sad, surprise)
+  model_name: "trpakov/vit-face-expression"
+  image_size: 224
+
+# ---------------------------------------------------------------------------
+# Emotional state mapping — how raw emotions map to higher-level dimensions
+# ---------------------------------------------------------------------------
+emotion_mapping:
+  # Each emotion → (energy_score, stress_score, work_inclination_score)
+  #   energy:          0 = exhausted … 1 = energetic
+  #   stress:          0 = calm      … 1 = highly stressed
+  #   work_inclination: 0 = needs rest … 1 = wants to keep working
+  joy:       { energy: 0.85, stress: 0.10, work: 0.80 }
+  surprise:  { energy: 0.65, stress: 0.30, work: 0.55 }
+  neutral:   { energy: 0.50, stress: 0.20, work: 0.50 }
+  anger:     { energy: 0.70, stress: 0.85, work: 0.20 }
+  disgust:   { energy: 0.35, stress: 0.70, work: 0.15 }
+  fear:      { energy: 0.45, stress: 0.90, work: 0.10 }
+  sadness:   { energy: 0.15, stress: 0.60, work: 0.15 }
+
+# ---------------------------------------------------------------------------
+# Labels for UI display
+# ---------------------------------------------------------------------------
+energy_labels:
+  - { max: 0.25, label: "Exhausted",  color: "#e74c3c" }
+  - { max: 0.45, label: "Low Energy", color: "#e67e22" }
+  - { max: 0.60, label: "Moderate",   color: "#f1c40f" }
+  - { max: 0.80, label: "Good Energy", color: "#2ecc71" }
+  - { max: 1.01, label: "Energetic",  color: "#27ae60" }
+
+stress_labels:
+  - { max: 0.30, label: "Calm",       color: "#27ae60" }
+  - { max: 0.55, label: "Mild Stress", color: "#f1c40f" }
+  - { max: 0.75, label: "Stressed",   color: "#e67e22" }
+  - { max: 1.01, label: "High Stress", color: "#e74c3c" }
+
+work_labels:
+  - { max: 0.25, label: "Needs Rest / Change",  color: "#e74c3c" }
+  - { max: 0.45, label: "Leaning Toward Rest",  color: "#e67e22" }
+  - { max: 0.60, label: "Neutral",              color: "#f1c40f" }
+  - { max: 0.80, label: "Willing to Continue",  color: "#2ecc71" }
+  - { max: 1.01, label: "Motivated to Work",    color: "#27ae60" }
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+  sample_data: "data/samples"

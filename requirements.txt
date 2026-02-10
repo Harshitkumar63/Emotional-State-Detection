@@ -1,0 +1,27 @@
+# ==============================================================================
+# Emotional State Detection System — Dependencies
+# ==============================================================================
+# Install:  pip install -r requirements.txt
+# Python:   3.9+
+# ==============================================================================
+
+# --- Transformers (text emotion + face emotion models) ---
+transformers>=4.30.0
+torch>=2.0.0
+
+# --- Audio analysis ---
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# --- Image handling ---
+Pillow>=9.0.0
+torchvision>=0.15.0
+
+# --- Scientific computing ---
+numpy>=1.24.0
+
+# --- Configuration ---
+pyyaml>=6.0
+
+# --- Web app ---
+streamlit>=1.28.0
