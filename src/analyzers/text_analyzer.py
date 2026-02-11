@@ -1,26 +1,23 @@
 """
-Text Analyzer — Real Emotion Classification from Written Text
-==============================================================
+Text Analyzer — Real Emotion Classification + Embedding Extraction
+===================================================================
 Uses ``j-hartmann/emotion-english-distilroberta-base``, a DistilRoBERTa
-model **fine-tuned on 6 emotion datasets** (including GoEmotions,
-ISEAR, and others).  It predicts seven emotion classes:
+model **fine-tuned on 6 emotion datasets** (GoEmotions, ISEAR, etc.).
+Predicts seven emotion classes:
 
-    anger · disgust · fear · joy · neutral · sadness · surprise
+    anger . disgust . fear . joy . neutral . sadness . surprise
 
-Why this model (instead of raw DistilBERT embeddings)?
-  The previous implementation extracted [CLS] embeddings and fed them
-  into a randomly-initialised classifier — which produces random output.
-  This model was actually *trained* to classify emotions, so its
-  predictions are meaningful out of the box.  No custom training needed.
+v2 additions:
+  - ``extract_embedding()`` returns the 768-d [CLS] token for the
+    attention-based fusion model.  The embedding is extracted from the
+    SAME model (no extra weights loaded) by accessing the pipeline's
+    internal model and requesting ``output_hidden_states=True``.
 
-Design decisions:
-  • We use the HuggingFace ``pipeline`` API for reliability; it handles
-    tokenisation, batching, and softmax internally.
-  • ``top_k=None`` returns scores for ALL emotions (not just the winner),
-    which the StateEngine needs for nuanced assessment.
-  • The analyser also extracts simple lexical signals (emotional keyword
-    matches) for the explainability module, so users understand *why*
-    the model reached its conclusion.
+Why this approach?
+  We keep the HuggingFace pipeline for ``analyze()`` (clean, reliable)
+  AND access the raw model for embeddings.  The model weights are shared,
+  so there's zero overhead.  This pattern — classification + embedding
+  from a single model — is standard in production multimodal systems.
 """
 
 from __future__ import annotations
@@ -28,6 +25,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+import torch
 from transformers import pipeline as hf_pipeline
 
 from src.utils.helpers import load_config, setup_logging
@@ -36,7 +34,6 @@ logger = setup_logging()
 
 # ---------------------------------------------------------------------------
 # Lexical signal keywords — used for explainability, NOT for prediction.
-# The model handles prediction; these give users interpretable evidence.
 # ---------------------------------------------------------------------------
 _SIGNAL_KEYWORDS = {
     "exhaustion": [
@@ -67,10 +64,11 @@ _SIGNAL_KEYWORDS = {
 
 
 class TextAnalyzer:
-    """Classify emotions in free-form text using a pretrained transformer.
+    """Classify emotions in free-form text AND extract dense embeddings.
 
-    Returns a dict with emotion probabilities, dominant emotion, and
-    lexical signals extracted from the input for explainability.
+    Public API:
+      - analyze(text)           -> emotion scores + explainability signals
+      - extract_embedding(text) -> 768-d [CLS] embedding for fusion model
     """
 
     def __init__(self, config: Optional[dict] = None):
@@ -79,19 +77,26 @@ class TextAnalyzer:
 
         model_name = config["text"]["model_name"]
         self.max_length = config["text"]["max_length"]
+        self.embedding_dim = config["text"].get("embedding_dim", 768)
 
         logger.info("Loading text emotion model: %s", model_name)
         self.classifier = hf_pipeline(
             "text-classification",
             model=model_name,
-            top_k=None,          # return all 7 emotion scores
+            top_k=None,
             truncation=True,
             max_length=self.max_length,
         )
-        logger.info("Text analyzer ready.")
+
+        # Expose the underlying model and tokenizer for embedding extraction.
+        # This does NOT load separate weights — it references the same objects
+        # that the pipeline already holds in memory.
+        self._model = self.classifier.model
+        self._tokenizer = self.classifier.tokenizer
+        logger.info("Text analyzer ready (classification + embedding).")
 
     # ------------------------------------------------------------------
-    # Public API
+    # Public API: Emotion Classification
     # ------------------------------------------------------------------
 
     def analyze(self, text: str) -> dict:
@@ -105,21 +110,18 @@ class TextAnalyzer:
         Returns
         -------
         dict with keys:
-            emotions        – {emotion: score} for all 7 classes
-            dominant_emotion – highest-scoring emotion label
-            dominant_score   – its probability
-            signals          – list of {source, observation, suggests}
+            emotions        - {emotion: score} for all 7 classes
+            dominant_emotion - highest-scoring emotion label
+            dominant_score   - its probability
+            signals          - list of {source, observation, suggests}
         """
         text = text.strip()
         if not text:
             raise ValueError("Text input is empty.")
 
-        # --- Model prediction (the REAL emotion classification) --------
-        raw = self.classifier(text)[0]  # list of {label, score}
+        raw = self.classifier(text)[0]
         emotions = {item["label"]: round(item["score"], 4) for item in raw}
         dominant = max(raw, key=lambda x: x["score"])
-
-        # --- Lexical signals (for explainability only) -----------------
         signals = self._extract_signals(text)
 
         return {
@@ -130,6 +132,44 @@ class TextAnalyzer:
         }
 
     # ------------------------------------------------------------------
+    # Public API: Embedding Extraction (NEW in v2)
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def extract_embedding(self, text: str) -> torch.Tensor:
+        """Extract the [CLS] token embedding from the emotion model.
+
+        Returns a (1, 768) tensor suitable for the fusion network.
+
+        Why the [CLS] token?
+          In transformer models fine-tuned for classification, the [CLS]
+          token is trained to aggregate sentence-level meaning.  For our
+          emotion-tuned DistilRoBERTa, this embedding encodes the emotional
+          content of the text — exactly what the fusion model needs.
+        """
+        text = text.strip()
+        if not text:
+            raise ValueError("Text input is empty.")
+
+        inputs = self._tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_length,
+        )
+
+        # Move to the same device as the model (CPU in our case)
+        device = self._model.device
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        # output_hidden_states=True gives us all layer activations
+        outputs = self._model(**inputs, output_hidden_states=True)
+
+        # Last hidden state, [CLS] token (position 0)
+        cls_embedding = outputs.hidden_states[-1][:, 0, :]  # (1, 768)
+        return cls_embedding.cpu()
+
+    # ------------------------------------------------------------------
     # Explainability helpers
     # ------------------------------------------------------------------
 
@@ -137,9 +177,8 @@ class TextAnalyzer:
     def _extract_signals(text: str) -> list[dict]:
         """Scan text for emotional keyword clusters.
 
-        This is NOT used for prediction — the transformer does that.
-        It gives the explainer concrete phrases to cite when telling
-        the user *why* the system reached its conclusion.
+        NOT used for prediction — the transformer does that.
+        Gives the explainer concrete phrases to cite.
         """
         text_lower = text.lower()
         signals = []

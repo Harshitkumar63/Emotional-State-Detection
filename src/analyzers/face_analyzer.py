@@ -1,25 +1,20 @@
 """
-Face Analyzer — Facial Emotion Recognition
-============================================
-Uses a Vision Transformer (ViT) fine-tuned on the FER-2013 dataset to
-classify facial expressions into seven emotions:
+Face Analyzer — Facial Emotion Recognition + Embedding Extraction
+==================================================================
+Uses a Vision Transformer (ViT) fine-tuned on FER-2013 to classify
+facial expressions into seven emotions:
 
-    angry · disgust · fear · happy · neutral · sad · surprise
+    angry . disgust . fear . happy . neutral . sad . surprise
 
-Why this replaces the old ResNet-18 pipeline:
-  ResNet-18 with ImageNet weights recognises objects (dogs, cars, etc.),
-  NOT facial emotions.  A face image was getting the same kind of feature
-  vector as any other photograph.  This model was actually **trained on
-  facial expression data**, so its predictions are meaningful.
+v2 additions:
+  - ``extract_embedding()`` returns the 768-d [CLS] token for fusion.
+  - Uses the pipeline's internal model (zero extra memory).
+  - Better fallback handling with clear model status.
 
 Design decisions:
-  • Uses the HuggingFace ``pipeline("image-classification")`` API.
-  • Falls back gracefully if the model can't be downloaded (e.g. offline).
-  • Accepts file paths, PIL Images, or numpy arrays for flexibility
-    with Streamlit uploads.
-  • Normalises label names to match the text analyzer's emotion vocabulary
-    (e.g. "happy" → "joy", "sad" → "sadness") so the StateEngine can
-    combine them seamlessly.
+  - Pipeline API for classification (reliable, handles preprocessing).
+  - Raw model access for embedding extraction via ``output_hidden_states``.
+  - Normalises labels to shared vocabulary so StateEngine can combine them.
 """
 
 from __future__ import annotations
@@ -27,6 +22,7 @@ from __future__ import annotations
 from typing import Optional, Union
 from pathlib import Path
 
+import torch
 from PIL import Image
 
 from src.utils.helpers import load_config, setup_logging
@@ -34,8 +30,7 @@ from src.utils.helpers import load_config, setup_logging
 logger = setup_logging()
 
 # ---------------------------------------------------------------------------
-# The face model may use different label names than the text model.
-# This map normalises them to a shared vocabulary.
+# Label normalisation: FER model labels → shared emotion vocabulary
 # ---------------------------------------------------------------------------
 _LABEL_MAP = {
     "happy":    "joy",
@@ -49,9 +44,11 @@ _LABEL_MAP = {
 
 
 class FaceAnalyzer:
-    """Classify facial emotions using a pretrained Vision Transformer.
+    """Classify facial emotions AND extract dense embeddings for fusion.
 
-    Falls back to a basic assessment if the model isn't available.
+    Public API:
+      - analyze(image)           -> emotion scores + signals
+      - extract_embedding(image) -> 768-d [CLS] embedding for fusion model
     """
 
     def __init__(self, config: Optional[dict] = None):
@@ -59,6 +56,7 @@ class FaceAnalyzer:
             config = load_config()
 
         model_name = config["face"]["model_name"]
+        self.embedding_dim = config["face"].get("embedding_dim", 768)
         self._model_ready = False
 
         try:
@@ -68,20 +66,22 @@ class FaceAnalyzer:
             self.classifier = hf_pipeline(
                 "image-classification",
                 model=model_name,
-                top_k=None,   # return all emotion scores
+                top_k=None,
             )
             self._model_ready = True
-            logger.info("Face analyzer ready.")
+
+            # Expose internals for embedding extraction (shared weights)
+            self._model = self.classifier.model
+            self._image_processor = self.classifier.image_processor
+            logger.info("Face analyzer ready (classification + embedding).")
         except Exception as exc:
-            # Model download can fail (offline, disk space, etc.)
-            # The system still works — just without face analysis.
             logger.warning(
                 "Face model could not be loaded (%s). "
                 "Face analysis will use fallback mode.", exc
             )
 
     # ------------------------------------------------------------------
-    # Public API
+    # Public API: Emotion Classification
     # ------------------------------------------------------------------
 
     def analyze(self, image_input: Union[str, Image.Image]) -> dict:
@@ -95,11 +95,11 @@ class FaceAnalyzer:
         Returns
         -------
         dict with keys:
-            emotions         – {emotion: score} normalised to shared vocabulary
-            dominant_emotion – top emotion label
-            dominant_score   – its probability
-            signals          – explainability evidence
-            model_used       – which model produced the result
+            emotions         - {emotion: score} normalised to shared vocab
+            dominant_emotion - top emotion label
+            dominant_score   - its probability
+            signals          - explainability evidence
+            model_used       - which model produced the result
         """
         image = self._load_image(image_input)
 
@@ -109,14 +109,46 @@ class FaceAnalyzer:
             return self._fallback_analysis(image)
 
     # ------------------------------------------------------------------
+    # Public API: Embedding Extraction (NEW in v2)
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def extract_embedding(self, image_input: Union[str, Image.Image]) -> torch.Tensor:
+        """Extract the [CLS] token embedding from the ViT model.
+
+        Returns a (1, 768) tensor suitable for the fusion network.
+
+        Why the ViT [CLS] token?
+          ViT (Vision Transformer) adds a learnable [CLS] token that
+          attends to all image patches.  After fine-tuning on FER-2013,
+          this token encodes the facial emotion content — exactly what
+          the fusion model needs for cross-modal attention.
+        """
+        if not self._model_ready:
+            # Return zero embedding when model unavailable (fusion handles this)
+            logger.warning("Face model not ready; returning zero embedding.")
+            return torch.zeros(1, self.embedding_dim)
+
+        image = self._load_image(image_input)
+        inputs = self._image_processor(image, return_tensors="pt")
+
+        device = self._model.device
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        outputs = self._model(**inputs, output_hidden_states=True)
+
+        # ViT [CLS] token is at position 0 of the last hidden state
+        cls_embedding = outputs.hidden_states[-1][:, 0, :]  # (1, 768)
+        return cls_embedding.cpu()
+
+    # ------------------------------------------------------------------
     # Model-based analysis
     # ------------------------------------------------------------------
 
     def _analyze_with_model(self, image: Image.Image) -> dict:
         """Run the ViT classifier and normalise labels."""
-        raw = self.classifier(image)  # list of {label, score}
+        raw = self.classifier(image)
 
-        # Normalise labels to shared vocabulary
         emotions = {}
         for item in raw:
             norm_label = _LABEL_MAP.get(item["label"].lower(), item["label"].lower())
@@ -124,7 +156,6 @@ class FaceAnalyzer:
 
         dominant_label = max(emotions, key=emotions.get)
         dominant_score = emotions[dominant_label]
-
         signals = self._build_signals(dominant_label, dominant_score)
 
         return {
@@ -141,19 +172,14 @@ class FaceAnalyzer:
 
     @staticmethod
     def _fallback_analysis(image: Image.Image) -> dict:
-        """Basic image-statistics heuristic when the ViT model is unavailable.
-
-        This is intentionally simple and honest — it only checks whether
-        the image appears very dark (possibly tired / low mood) or normal.
-        It does NOT claim to detect specific emotions.
-        """
+        """Basic heuristic when the ViT model is unavailable."""
         import numpy as np
 
         arr = np.array(image.convert("RGB")).astype(float)
         brightness = arr.mean() / 255.0
 
         if brightness < 0.3:
-            note = "Image appears dark — this may affect analysis accuracy"
+            note = "Image appears dark - this may affect analysis accuracy"
         else:
             note = "Image brightness is normal"
 
@@ -175,7 +201,7 @@ class FaceAnalyzer:
 
     @staticmethod
     def _load_image(image_input: Union[str, Image.Image]) -> Image.Image:
-        """Accept a file path or PIL Image; return an RGB PIL Image."""
+        """Accept file path or PIL Image; return RGB PIL Image."""
         if isinstance(image_input, str):
             return Image.open(image_input).convert("RGB")
         elif isinstance(image_input, Image.Image):

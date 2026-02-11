@@ -1,61 +1,101 @@
 # ==============================================================================
-# Emotional State Detection System — Configuration
+# Multimodal Burnout Risk Detection System v2 — Configuration
 # ==============================================================================
 # Every tuneable parameter lives here.  Source code reads this file;
 # nothing is hardcoded in Python modules.
 # ==============================================================================
 
 project:
-  name: "Multimodal Emotional State Detection System"
+  name: "Multimodal Burnout Risk Detection System"
   version: "2.0.0"
   description: >
-    Understands a person's current mental and emotional state from text,
-    voice, or facial expression — any single input is sufficient.
+    Detects early burnout risk using text, voice, and facial expression.
+    Combines emotion analysis with attention-based multimodal fusion.
     This is NOT a clinical diagnostic tool.
 
 # ---------------------------------------------------------------------------
-# Text Analyzer — uses a HuggingFace model fine-tuned for emotion classification
+# Text Analyzer — HuggingFace DistilRoBERTa fine-tuned on 6 emotion datasets
 # ---------------------------------------------------------------------------
 text:
-  # This model outputs: anger, disgust, fear, joy, neutral, sadness, surprise
   model_name: "j-hartmann/emotion-english-distilroberta-base"
   max_length: 512
+  embedding_dim: 768          # [CLS] token dimension for fusion
 
 # ---------------------------------------------------------------------------
-# Voice Analyzer — acoustic feature extraction via librosa
+# Voice Analyzer (Acoustic Baseline) — librosa feature extraction
 # ---------------------------------------------------------------------------
 voice:
-  sample_rate: 22050          # librosa default; more suitable for feature extraction
+  sample_rate: 22050
   max_duration_sec: 60
-  # Reference thresholds for interpreting acoustic features.
-  # Based on published psychoacoustics research on emotional speech.
   thresholds:
-    energy_low: 0.01          # RMS below this → low vocal energy
-    energy_high: 0.05         # RMS above this → high vocal energy
-    pitch_low_hz: 120         # mean F0 below this → flat / fatigued tone
-    pitch_high_hz: 220        # mean F0 above this → aroused / stressed tone
-    pitch_var_low: 20         # std(F0) below this → monotone (disengaged)
-    pitch_var_high: 50        # std(F0) above this → emotionally variable
-    tempo_slow_bpm: 90        # speech tempo below this → slow / lethargic
-    tempo_fast_bpm: 160       # speech tempo above this → rushed / anxious
+    energy_low: 0.01
+    energy_high: 0.05
+    pitch_low_hz: 120
+    pitch_high_hz: 220
+    pitch_var_low: 20
+    pitch_var_high: 50
+    tempo_slow_bpm: 90
+    tempo_fast_bpm: 160
 
 # ---------------------------------------------------------------------------
-# Face Analyzer — HuggingFace image-classification model for facial emotions
+# Voice Analyzer (Deep) — Wav2Vec2 fine-tuned on IEMOCAP for emotion recognition
+# Why Wav2Vec2 over raw acoustic features?
+#   Deep speech models learn hierarchical representations of prosody,
+#   rhythm, and spectral patterns from 960h of speech.  When fine-tuned
+#   on emotion data, they outperform handcrafted features by 10-20%
+#   on benchmarks (Yang et al., SUPERB 2021).
+# ---------------------------------------------------------------------------
+voice_deep:
+  model_name: "superb/wav2vec2-base-superb-er"
+  sample_rate: 16000            # Wav2Vec2 expects 16 kHz
+  max_duration_sec: 30
+  embedding_dim: 768
+  # IEMOCAP label mapping → standard vocabulary
+  label_map:
+    neu: "neutral"
+    hap: "joy"
+    ang: "anger"
+    sad: "sadness"
+
+# ---------------------------------------------------------------------------
+# Face Analyzer — ViT fine-tuned on FER-2013
 # ---------------------------------------------------------------------------
 face:
-  # ViT model fine-tuned on FER-2013 (7 emotions: angry, disgust, fear,
-  # happy, neutral, sad, surprise)
   model_name: "trpakov/vit-face-expression"
   image_size: 224
+  embedding_dim: 768            # ViT [CLS] token dimension for fusion
 
 # ---------------------------------------------------------------------------
-# Emotional state mapping — how raw emotions map to higher-level dimensions
+# Attention Fusion Network
+# Why attention-based fusion instead of simple averaging?
+#   Averaging treats every modality equally, even when one is noisy or
+#   missing.  Attention learns PER-SAMPLE importance weights — so if
+#   text is highly emotional but the face is neutral, the model can
+#   upweight text for that specific input.
+# ---------------------------------------------------------------------------
+fusion:
+  hidden_dim: 256
+  num_classes: 3                # Low Risk / Moderate Risk / High Risk
+  dropout: 0.3
+  checkpoint: "checkpoints/fusion_model.pt"
+
+# ---------------------------------------------------------------------------
+# Burnout risk labels
+# ---------------------------------------------------------------------------
+burnout_labels:
+  0: "Low Risk"
+  1: "Moderate Risk"
+  2: "High Risk"
+
+burnout_colors:
+  "Low Risk": "#27ae60"
+  "Moderate Risk": "#f39c12"
+  "High Risk": "#e74c3c"
+
+# ---------------------------------------------------------------------------
+# Emotion → dimension mapping (unchanged from v1)
 # ---------------------------------------------------------------------------
 emotion_mapping:
-  # Each emotion → (energy_score, stress_score, work_inclination_score)
-  #   energy:          0 = exhausted … 1 = energetic
-  #   stress:          0 = calm      … 1 = highly stressed
-  #   work_inclination: 0 = needs rest … 1 = wants to keep working
   joy:       { energy: 0.85, stress: 0.10, work: 0.80 }
   surprise:  { energy: 0.65, stress: 0.30, work: 0.55 }
   neutral:   { energy: 0.50, stress: 0.20, work: 0.50 }
@@ -64,20 +104,17 @@ emotion_mapping:
   fear:      { energy: 0.45, stress: 0.90, work: 0.10 }
   sadness:   { energy: 0.15, stress: 0.60, work: 0.15 }
 
-# ---------------------------------------------------------------------------
-# Labels for UI display
-# ---------------------------------------------------------------------------
 energy_labels:
-  - { max: 0.25, label: "Exhausted",  color: "#e74c3c" }
-  - { max: 0.45, label: "Low Energy", color: "#e67e22" }
-  - { max: 0.60, label: "Moderate",   color: "#f1c40f" }
+  - { max: 0.25, label: "Exhausted",   color: "#e74c3c" }
+  - { max: 0.45, label: "Low Energy",  color: "#e67e22" }
+  - { max: 0.60, label: "Moderate",    color: "#f1c40f" }
   - { max: 0.80, label: "Good Energy", color: "#2ecc71" }
-  - { max: 1.01, label: "Energetic",  color: "#27ae60" }
+  - { max: 1.01, label: "Energetic",   color: "#27ae60" }
 
 stress_labels:
-  - { max: 0.30, label: "Calm",       color: "#27ae60" }
+  - { max: 0.30, label: "Calm",        color: "#27ae60" }
   - { max: 0.55, label: "Mild Stress", color: "#f1c40f" }
-  - { max: 0.75, label: "Stressed",   color: "#e67e22" }
+  - { max: 0.75, label: "Stressed",    color: "#e67e22" }
   - { max: 1.01, label: "High Stress", color: "#e74c3c" }
 
 work_labels:
@@ -87,8 +124,5 @@ work_labels:
   - { max: 0.80, label: "Willing to Continue",  color: "#2ecc71" }
   - { max: 1.01, label: "Motivated to Work",    color: "#27ae60" }
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
 paths:
   sample_data: "data/samples"

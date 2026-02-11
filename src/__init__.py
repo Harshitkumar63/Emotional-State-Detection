@@ -1,8 +1,8 @@
 """
-Multimodal Emotional State Detection System
-
-Analyses a person's current mental and emotional state from text,
-voice, or facial expression.  Any single input is sufficient.
+Multimodal Burnout Risk Detection System v2
+=============================================
+Detects early burnout risk using text, voice, and facial expression
+via attention-based multimodal fusion.
 """
 
 __version__ = "2.0.0"

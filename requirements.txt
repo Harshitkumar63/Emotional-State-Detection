@@ -1,27 +1,33 @@
 # ==============================================================================
-# Emotional State Detection System — Dependencies
-# ==============================================================================
-# Install:  pip install -r requirements.txt
-# Python:   3.9+
+# Multimodal Burnout Risk Detection System v2 — Dependencies
 # ==============================================================================
 
-# --- Transformers (text emotion + face emotion models) ---
-transformers>=4.30.0
+# --- Core ML ---
 torch>=2.0.0
+torchaudio>=2.0.0
+transformers>=4.30.0
 
-# --- Audio analysis ---
+# --- Audio ---
 librosa>=0.10.0
 soundfile>=0.12.0
 
-# --- Image handling ---
-Pillow>=9.0.0
-torchvision>=0.15.0
+# --- Image ---
+Pillow>=10.0.0
 
-# --- Scientific computing ---
-numpy>=1.24.0
+# --- Face Detection (optional, for preprocessing) ---
+# facenet-pytorch>=2.5.0
+
+# --- Text Preprocessing ---
+# langdetect>=1.0.9
 
 # --- Configuration ---
 pyyaml>=6.0
 
-# --- Web app ---
+# --- Frontend ---
 streamlit>=1.28.0
+
+# --- Utilities ---
+numpy>=2.0.0
+
+# --- Testing ---
+pytest>=7.0.0
