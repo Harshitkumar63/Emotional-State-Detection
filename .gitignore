@@ -24,6 +24,12 @@ Thumbs.db
 output/
 checkpoints/
 
+# SQLite database (user data — not committed)
+data/session_history.db
+
 # Temp files
 *.tmp
 *.log
+
+# Pytest cache
+.pytest_cache/

@@ -1,5 +1,5 @@
 # ==============================================================================
-# Multimodal Burnout Risk Detection System v2 — Configuration
+# Multimodal Burnout Risk Detection System v3 — Configuration
 # ==============================================================================
 # Every tuneable parameter lives here.  Source code reads this file;
 # nothing is hardcoded in Python modules.
@@ -7,7 +7,7 @@
 
 project:
   name: "Multimodal Burnout Risk Detection System"
-  version: "2.0.0"
+  version: "3.0.0"
   description: >
     Detects early burnout risk using text, voice, and facial expression.
     Combines emotion analysis with attention-based multimodal fusion.
@@ -124,5 +124,30 @@ work_labels:
   - { max: 0.80, label: "Willing to Continue",  color: "#2ecc71" }
   - { max: 1.01, label: "Motivated to Work",    color: "#27ae60" }
 
+# ---------------------------------------------------------------------------
+# Temporal Model (GRU-based trend prediction)
+# ---------------------------------------------------------------------------
+temporal:
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.2
+  checkpoint: "checkpoints/temporal_model.pt"
+
+# ---------------------------------------------------------------------------
+# Confidence Calibration
+# ---------------------------------------------------------------------------
+calibration:
+  temperature: 1.5          # T > 1 softens overconfident predictions
+  mc_dropout_samples: 10    # number of MC Dropout forward passes
+
+# ---------------------------------------------------------------------------
+# Session Store
+# ---------------------------------------------------------------------------
+session:
+  db_path: "data/session_history.db"
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
 paths:
   sample_data: "data/samples"

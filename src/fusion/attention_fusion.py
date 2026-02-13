@@ -1,7 +1,7 @@
 """
 Attention-Based Multimodal Fusion Network
 ==========================================
-The core v2 upgrade: a PyTorch module that fuses embeddings from text,
+The core fusion module: a PyTorch network that fuses embeddings from text,
 voice, and face modalities into a burnout risk prediction.
 
 Architecture:

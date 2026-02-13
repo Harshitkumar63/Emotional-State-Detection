@@ -1,5 +1,5 @@
 """
-Burnout Engine — Unified Burnout Risk Assessment (v2 Core)
+Burnout Engine — Unified Burnout Risk Assessment (v3 Core)
 ===========================================================
 The central orchestrator that:
 
