@@ -173,7 +173,7 @@ This gives users two signals: "how confident is the model?" and "how consistent 
 | Temperature = 1.5 | Learned temperature | No validation set available; 1.5 is a reasonable conservative default |
 
 ---
-
+      
 ## 8. Models Used
 
 | Model | Parameters | Training Data | Task |
